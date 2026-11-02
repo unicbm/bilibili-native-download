@@ -241,13 +241,18 @@ function startBiliDownloader({ win, doc, network, media, core, range, pickDirect
     if(disposed)return;
     const toolbar=doc.querySelector('.video-toolbar-left-main')||doc.querySelector('.video-toolbar-left')||doc.querySelector('.video-toolbar-container');
     if(!toolbar)return;
+    // The toolbar can exist in server-rendered HTML before Bilibili's Vue app
+    // hydrates it. Adding children then invalidates hydration and mounts the
+    // site's header twice, leaving its container empty. Vue removes this marker
+    // synchronously during hydration; the observer below runs after it finishes.
+    if(toolbar.closest('[data-server-rendered]'))return;
     const anchor=toolbar.closest('.video-toolbar-container')||toolbar.closest('.video-toolbar-left')||toolbar;
     if(entry.parentElement!==toolbar)toolbar.append(entry);
     if(anchor.parentElement&&(host.parentElement!==anchor.parentElement||anchor.nextElementSibling!==host))anchor.after(host);
     mountedToolbar=toolbar;mountedAfter=anchor;
   }
   const observer=new win.MutationObserver(()=>{if(!isMounted()&&!mountTimer)mountTimer=win.setTimeout(()=>{mountTimer=null;mount();},100);});
-  observer.observe(doc.body||doc.documentElement,{childList:true,subtree:true});mount();
+  observer.observe(doc.body||doc.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['data-server-rendered']});mount();
   const routeTimer=win.setInterval(()=>{if(lastHref!==win.location.href){lastHref=win.location.href;if(!activeJob&&!host.hidden)void analyze();else if(!activeJob){analysisController?.abort();cancelPreparation();meta=null;manifest=null;}}},1000);
   const beforeUnload=e=>{if(activeJob){e.preventDefault();e.returnValue='';}};
   win.addEventListener('beforeunload',beforeUnload);

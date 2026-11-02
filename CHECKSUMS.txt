@@ -1,1 +1,1 @@
-b2f863e0f91f901c505605bc2944e51f4a8364982108cd4a66815abd6838cb18  dist/bilibili-native-download.user.js
+871cb05ac58d727f9852882312aa97228fb1aad28d19f7b2acc0816a44c95376  dist/bilibili-native-download.user.js
