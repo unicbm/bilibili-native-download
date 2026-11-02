@@ -1,2 +1,56 @@
-# bilibili-native-download
-在 B站视频页下载视频：选择画质、查看大小、自动选 CDN，并发下载并合成 MP4。
+# B站原生下载
+
+一个油猴脚本，在 B站视频页的“分享”旁边加上“下载”按钮，选好画质后直接保存为带声音的 MP4。
+
+## 安装
+
+推荐 **Edge / Chrome + Tampermonkey**。
+
+1. [点击安装脚本](https://github.com/unicbm/bilibili-native-download/raw/refs/heads/main/dist/bilibili-native-download.user.js)，在油猴弹出的页面确认安装。
+2. 如果没有弹出安装页面，就把文件下载下来，在油猴控制面板的“实用工具”里从文件导入。也可以新建脚本，粘贴文件全部内容并保存。
+3. 刷新 B站视频页，点击“分享”后面的“下载”。
+
+## 能做什么
+
+- 列出当前账号可用的画质，以及 H.264、HEVC、AV1 编码选项。
+- 显示文件大小。列表先给估算值，选中后读取准确的音视频体积。
+- 测试视频的 CDN 主备线路，优先用测得更快的地址，失败时尝试备用线路。
+- 分片并发下载，默认 4 路，可以改成 1、2、6 或 8 路。
+- 在浏览器里合并音视频，不转码，不需要额外安装 FFmpeg。
+
+登录状态直接沿用当前浏览器，不用手填 Cookie。默认选当前可用的最高画质和 H.264，音频选 AAC。
+
+## 使用时注意什么
+
+长视频选“直接写入磁盘”，选择保存位置后会边下载边写入文件。浏览器不支持这个功能时，可以用“内存下载”，上限是 256 MiB。
+
+下载时保持标签页打开。关掉下载面板可以继续下载；点击“取消”后，下次需要重新开始。当前没有跨刷新断点续传。
+
+CDN 测速每条线路最多读取 256 KiB。选线和并发可能改善单连接慢、默认线路差的问题，实际速度仍受本地网络和 CDN 限制，先用默认 4 路就行。
+
+体积显示的是原始音视频流之和，合成后的 MP4 大小会略有变化。
+
+目前支持普通 BV / AV 视频页及当前分 P。直播、番剧、批量下载、杜比视界、FLAC / 杜比音轨、加密媒体和旧版 `durl` 格式暂不支持。
+
+## 开发
+
+需要 Node.js 22 或更新版本。
+
+```sh
+npm ci
+npm run build
+```
+
+生成的安装文件在 `dist/bilibili-native-download.user.js`。用户安装这个文件即可，不需要 Node.js。
+
+运行测试需要另外安装 `ffmpeg` 和 `ffprobe`：
+
+```sh
+npm test
+```
+
+核心代码在 `core.js`、`network.js`、`range-engine.js`、`engine.js` 和 `main.js`。分别负责视频信息、网络请求、分片下载、音视频合成和界面。
+
+## 许可与依赖
+
+项目代码使用 [MIT 许可](LICENSE)。音视频合成使用 [Mediabunny](https://github.com/Vanilagy/mediabunny) 1.65.0，按 [MPL 2.0](vendor/LICENSE) 许可随脚本打包，[对应版本的上游源码](https://registry.npmjs.org/mediabunny/-/mediabunny-1.65.0.tgz)可从 npm 获取。

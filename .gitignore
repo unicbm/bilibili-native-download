@@ -1,0 +1,10 @@
+node_modules/
+tests/fixtures/
+coverage/
+*.log
+.DS_Store
+.env
+.env.*
+tmp-*
+preview.html
+preview-entry.js

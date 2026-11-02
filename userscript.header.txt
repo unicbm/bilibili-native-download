@@ -1,0 +1,43 @@
+// ==UserScript==
+// @name         B站原生下载 · 自动选线与音视频合成
+// @namespace    uni.bilibili.native-download
+// @version      1.0.0
+// @description  在分享旁添加下载入口；当前会话解析画质/体积，CDN小块测速，分片并发下载，本地无损合成MP4，流式写入磁盘。
+// @author       uni
+// @match        https://www.bilibili.com/video/*
+// @run-at       document-idle
+// @noframes
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
+// @connect      api.bilibili.com
+// @connect      bilivideo.com
+// @connect      bilivideo.cn
+// @connect      bilivideo.net
+// @connect      akamaized.net
+// @connect      bcache.com
+// @connect      szbdyd.com
+// @license      MIT; bundled Mediabunny MPL-2.0
+// @downloadURL  none
+// @updateURL    none
+// ==/UserScript==
+
+/*
+ * B站原生下载 v1.0.0 · 2026-11-02
+ * Application source: MIT. Repository, readable modules, build instructions
+ * and tests: https://github.com/unicbm/bilibili-native-download
+ *
+ * Includes an unmodified, tree-shaken subset of Mediabunny 1.65.0 (MPL-2.0).
+ * Copyright (c) 2026-present, Vanilagy and contributors.
+ * Corresponding source is available from the exact upstream npm release:
+ * https://registry.npmjs.org/mediabunny/-/mediabunny-1.65.0.tgz
+ * License: https://www.mozilla.org/MPL/2.0/
+ *
+ * No runtime @require, remote parser, analytics, Cookie export, or auth-token
+ * storage. Login session is sent only to the original Bilibili API through
+ * the browser's native cookie rules. CDN requests retain the API signatures.
+ *
+ * Install: Tampermonkey dashboard > Utilities > Import from file; choose
+ * this .user.js file, then refresh a Bilibili /video/ page.
+ */
