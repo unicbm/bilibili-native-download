@@ -107,13 +107,13 @@ function createBiliCore() {
     if(!page || !Number.isSafeInteger(Number(page.cid)) || Number(page.cid)<=0) throw new Error('找不到当前分P，已停止解析以免下载到其他分P。');
     return {bvid:view.bvid,aid:view.aid,cid:Number(page.cid),page:identity.p,pageCount:pages.length,title:view.title||'Bilibili',part:page.part||'',duration:page.duration||0,identity:identity.key};
   }
-  function filename(meta,video) {
+  function filename(meta,video,tag='') {
     const encoder=new TextEncoder();
     const clean=s=>String(s??'').normalize('NFC').replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g,'_').replace(/[. ]+$/g,'').trim();
     // A component must fit both Windows UTF-16 limits and common 255-byte
     // UTF-8 filesystems. Reserve 15 bytes of headroom; keep code points intact.
     const cut=(s,budget)=>{let result='',used=0;for(const ch of s){const n=encoder.encode(ch).length;if(used+n>budget)break;result+=ch;used+=n;}return result.replace(/[. ]+$/g,'');};
-    const suffix=`_${cut(clean(meta.bvid)||'Bilibili',24)}_P${Number.isSafeInteger(meta.page)&&meta.page>0?meta.page:1}_${cut(clean(video.label)||'video',64)}_${cut(clean(video.codec)||'codec',16)}.mp4`;
+    const suffix=`_${cut(clean(meta.bvid)||'Bilibili',24)}_P${Number.isSafeInteger(meta.page)&&meta.page>0?meta.page:1}_${cut(clean(video.label)||'video',64)}_${cut(clean(video.codec)||'codec',16)}${tag?'_'+cut(clean(tag),64):''}.mp4`;
     const budget=240-encoder.encode(suffix).length;
     let title=clean(meta.title)+(meta.pageCount>1?`_${clean(meta.part)}`:'');
     title=cut(title||'Bilibili',budget);

@@ -6,7 +6,7 @@ const { getEventListeners } = require('node:events');
 const { JSDOM } = require('jsdom');
 const { createBiliCore } = require('../core.js');
 const { startBiliDownloader } = require('../main.js');
-const { createSaveFilePicker } = require('../picker.js');
+const { createDirectoryPicker } = require('../picker.js');
 
 const core = createBiliCore();
 const href = 'https://www.bilibili.com/video/BV1TestVideo/?p=2';
@@ -54,21 +54,37 @@ function setup(t, options = {}) {
     async abort() { assert.equal(this, target); this.aborts++; },
   };
   let writableCalls = 0;
-  const handle = { async createWritable() { assert.equal(this, handle); writableCalls++; if (options.createWritable) return options.createWritable(); return target; } };
+  const handle = {
+    name: '',
+    async getFile() { assert.equal(this, handle); return options.getFile ? options.getFile() : { name: handle.name, size: 0, lastModified: 1 }; },
+    async createWritable(args) {
+      assert.equal(this, handle); writableCalls++;
+      assert.deepEqual(args, { keepExistingData: false, mode: 'exclusive' });
+      if (options.createWritable) return options.createWritable(args);
+      return target;
+    },
+  };
+  const fileLookups = [];
+  const directory = { async getFileHandle(name, args = {}) {
+    assert.equal(this, directory); fileLookups.push({ name, args });
+    if (options.getFileHandle) return options.getFileHandle(name, args, handle);
+    if (!args.create) throw new DOMException('No such file', 'NotFoundError');
+    handle.name = name; return handle;
+  } };
   const pickerWindow = options.pickerWindow || win;
-  if (options.picker !== false) pickerWindow.showSaveFilePicker = function (args) {
+  if (options.picker !== false) pickerWindow.showDirectoryPicker = function (args) {
     // Native Window methods reject a userscript's window wrapper as `this`.
-    if (this !== pickerWindow) throw new TypeError("Failed to execute 'showSaveFilePicker' on 'Window': Illegal invocation");
+    if (this !== pickerWindow) throw new TypeError("Failed to execute 'showDirectoryPicker' on 'Window': Illegal invocation");
     events.push({ type: 'picker', args });
-    return options.picker ? options.picker(args) : Promise.resolve(handle);
+    return options.picker ? options.picker(args) : Promise.resolve(directory);
   };
   if (pickerWindow !== win) {
     const sandboxWindow = new Proxy(pickerWindow, {});
     // Keep a callable on the sandbox even when the native API is unavailable.
     // Neither capability detection nor saving should consult this wrapper.
-    win.showSaveFilePicker = function (args) {
-      if (typeof sandboxWindow.showSaveFilePicker !== 'function') throw new Error('Sandbox-only picker must not be called');
-      return sandboxWindow.showSaveFilePicker(args);
+    win.showDirectoryPicker = function (args) {
+      if (typeof sandboxWindow.showDirectoryPicker !== 'function') throw new Error('Sandbox-only picker must not be called');
+      return sandboxWindow.showDirectoryPicker(args);
     };
   }
   function makeSource(args) {
@@ -105,11 +121,11 @@ function setup(t, options = {}) {
     },
   };
   const saved = [];
-  const app = startBiliDownloader({ win, doc, network, media, core, range, pickSaveFile: createSaveFilePicker(pickerWindow), getValue: () => 4, setValue: (k, v) => saved.push([k, v]) });
+  const app = startBiliDownloader({ win, doc, network, media, core, range, pickDirectory: createDirectoryPicker(pickerWindow), getValue: () => 4, setValue: (k, v) => saved.push([k, v]) });
   const el = id => app.shadow.querySelector(`[data-id="${id}"]`);
   const ready = async () => { app.open(); await until(() => app.getState().prepared, 'prepared selection'); };
   t.after(() => { app.dispose(); dom.window.close(); });
-  return { dom, win, doc, app, el, ready, events, sources, requests, urls, revoked, target, handle, saved, get writableCalls() { return writableCalls; } };
+  return { dom, win, doc, app, el, ready, events, sources, requests, urls, revoked, target, handle, directory, fileLookups, saved, get writableCalls() { return writableCalls; } };
 }
 
 test('download toggles an inline region after the toolbar and preserves the prepared selection', async t => {
@@ -257,10 +273,10 @@ test('a superseded CDN preparation disposes its source and cannot publish a stal
   assert.equal(h.el('download').disabled, false);
 });
 
-test('save picker uses the native Window receiver synchronously, despite a userscript window Proxy', async t => {
+test('directory picker uses the native Window receiver synchronously, despite a userscript window Proxy', async t => {
   const pick = deferred(), mux = deferred();
   const h = setup(t, { pickerWindow: {}, picker: () => pick.promise, mux: args => mux.promise });
-  assert.throws(() => h.win.showSaveFilePicker({}), /Illegal invocation/, 'the old sandbox call must fail in this regression fixture');
+  assert.throws(() => h.win.showDirectoryPicker({}), /Illegal invocation/, 'the old sandbox call must fail in this regression fixture');
   await h.ready();
   const pack = h.app.getState().prepared;
   h.el('download').click();
@@ -268,8 +284,8 @@ test('save picker uses the native Window receiver synchronously, despite a users
   assert.equal(h.writableCalls, 0);
   assert.equal(h.el('download').disabled, true);
   assert.equal(h.app.getState().activeJob !== null, true);
-  assert.match(h.events[0].args.suggestedName, /_P2_/);
-  pick.resolve(h.handle);
+  assert.deepEqual(h.events[0].args, { id: 'bnd-downloads', mode: 'readwrite' });
+  pick.resolve(h.directory);
   await until(() => h.events.some(e => e.type === 'mux'), 'mux invocation');
   const call = h.events.find(e => e.type === 'mux').args;
   assert.equal(call.videoSource, pack.video);
@@ -297,7 +313,8 @@ test('save picker uses the native Window receiver synchronously, despite a users
   assert.equal(pack.audio.disposed, 1);
   assert.equal(pack.controller.signal.aborted, true);
   assert.equal(getEventListeners(call.signal, 'abort').length, 0);
-  const savedStatus = `已保存：${h.events[0].args.suggestedName}`;
+  const savedStatus = `已保存：${h.handle.name}`;
+  assert.match(h.handle.name, /_P2_/);
   assert.equal(h.el('status').textContent, savedStatus);
   assert.equal(h.doc.querySelector('#bnd-panel-host').hidden, true);
   h.app.open();
@@ -308,7 +325,7 @@ test('save picker uses the native Window receiver synchronously, despite a users
   assert.equal(h.sources.length, sourcesBeforeCompletion, 'reopening a completed download does not start new CDN probes');
 });
 
-test('dismissing the native save picker cancels without retrying, opening a writable, or starting mux', async t => {
+test('dismissing the native directory picker cancels without retrying, opening a writable, or starting mux', async t => {
   const h = setup(t, { pickerWindow: {}, picker: () => Promise.reject(abortError()) });
   await h.ready();
   const requestsBefore = h.requests.length;
@@ -327,14 +344,14 @@ test('dismissing the native save picker cancels without retrying, opening a writ
   assert.match(h.el('status').textContent, /已取消/);
 });
 
-test('cancel while save picker is pending never opens a writable and releases prepared sources', async t => {
+test('cancel while directory picker is pending never opens a writable and releases prepared sources', async t => {
   const pick = deferred();
   const h = setup(t, { picker: () => pick.promise });
   await h.ready();
   const pack = h.app.getState().prepared;
   h.el('download').click();
   h.el('cancel').click();
-  pick.resolve(h.handle);
+  pick.resolve(h.directory);
   await until(() => h.app.getState().activeJob === null, 'picker cancellation');
   assert.equal(h.writableCalls, 0);
   assert.equal(h.events.some(e => e.type === 'mux'), false);
@@ -343,6 +360,60 @@ test('cancel while save picker is pending never opens a writable and releases pr
   assert.equal(h.app.getState().prepared, null);
   assert.match(h.el('status').textContent, /已取消/);
   assert.equal(h.el('refresh').disabled, false);
+});
+
+test('folder permission refusal preserves preparation and a second explicit click can save to a new file', async t => {
+  let attempts = 0, h;
+  h = setup(t, { picker() {
+    if (++attempts === 1) return Promise.reject(new DOMException('Folder permission refused', 'NotAllowedError'));
+    return Promise.resolve(h.directory);
+  } });
+  await h.ready();
+  const pack = h.app.getState().prepared, requestCount = h.requests.length, sourceCount = h.sources.length;
+  h.el('download').click();
+  await until(() => h.app.getState().activeJob === null, 'folder refusal handled');
+  assert.equal(h.app.getState().prepared, pack);
+  assert.equal(pack.controller.signal.aborted, false);
+  assert.equal(h.writableCalls, 0);
+  assert.equal(h.events.some(e => e.type === 'mux'), false);
+  assert.equal(h.el('error').hidden, false);
+  assert.equal(h.el('download').disabled, false);
+  h.el('download').click();
+  assert.equal(attempts, 2, 'retry requires and preserves the new click activation');
+  await until(() => h.app.getState().activeJob === null, 'retry saved');
+  assert.equal(h.el('error').hidden, true);
+  assert.equal(h.el('status').textContent, `已保存：${h.handle.name}`);
+  assert.equal(h.events.filter(e => e.type === 'mux').length, 1);
+  assert.equal(h.requests.length, requestCount);
+  assert.equal(h.sources.length, sourceCount);
+});
+
+test('locked and security-rejected file creation stays retryable and is not reported as user cancellation', async t => {
+  for (const name of ['NoModificationAllowedError', 'AbortError']) {
+    await t.test(name, async t => {
+      let attempts = 0, h;
+      h = setup(t, { createWritable() {
+        if (++attempts === 1) throw new DOMException('Native writer blocked', name);
+        return h.target;
+      } });
+      await h.ready();
+      const pack = h.app.getState().prepared;
+      h.el('download').click();
+      await until(() => h.app.getState().activeJob === null, 'native failure shown');
+      const firstName = h.handle.name;
+      assert.equal(h.app.getState().prepared, pack);
+      assert.equal(pack.controller.signal.aborted, false);
+      assert.equal(h.events.some(e => e.type === 'mux'), false);
+      assert.equal(h.el('error').hidden, false);
+      assert.doesNotMatch(h.el('status').textContent, /已取消/);
+      assert.equal(h.el('download').disabled, false);
+      h.el('download').click();
+      await until(() => h.app.getState().activeJob === null, 'new output saved');
+      assert.notEqual(h.handle.name, firstName, 'another attempt gets another output filename');
+      assert.equal(h.el('status').textContent, `已保存：${h.handle.name}`);
+      assert.equal(h.target.closes, 1);
+    });
+  }
 });
 
 test('cancel active mux relays cancellation to CDN sources and supports a fresh retry', async t => {
@@ -395,7 +466,7 @@ test('failed mux cleans up sources and abort listener, surfaces a redacted error
 
 test('memory fallback creates a completed blob and changing quality revokes its URL', async t => {
   const h = setup(t, { picker: false, pickerWindow: {} });
-  assert.equal(typeof h.win.showSaveFilePicker, 'function', 'sandbox API presence must not override native picker availability');
+  assert.equal(typeof h.win.showDirectoryPicker, 'function', 'sandbox API presence must not override native picker availability');
   await h.ready();
   assert.equal(h.el('save-mode').value, 'memory');
   assert.equal(h.el('save-mode').options[0].disabled, true);

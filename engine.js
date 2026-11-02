@@ -16,7 +16,7 @@ function createMediaEngine(MB) {
     if (signal && signal.aborted) throw abortError();
   }
   function publicError(error, signal) {
-    if ((signal && signal.aborted) || (error && error.name === 'AbortError')) return abortError();
+    if (signal && signal.aborted) return abortError();
     if (/encrypt|decrypt|resolveKeyId|\bDRM\b/i.test(String(error && error.message))) {
       return new Error('该媒体使用加密封装，当前脚本无法合并。');
     }

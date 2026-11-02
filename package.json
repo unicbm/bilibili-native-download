@@ -1,12 +1,12 @@
 {
   "name": "bilibili-native-download",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Session-aware Bilibili userscript with measured CDN selection and lossless streamed MP4 remuxing",
   "license": "MIT",
   "scripts": {
     "build": "node build.cjs",
-    "test": "npm run build && node core.test.cjs && node range-engine.test.cjs && node tests/network.test.cjs && node tests/ui.test.cjs && node tests/engine.test.cjs && node tests/composed.test.cjs && node tests/bundle.test.cjs"
+    "test": "npm run build && node core.test.cjs && node range-engine.test.cjs && node tests/network.test.cjs && node tests/save-target.test.cjs && node tests/ui.test.cjs && node tests/engine.test.cjs && node tests/composed.test.cjs && node tests/bundle.test.cjs"
   },
   "dependencies": {
     "mediabunny": "1.65.0"

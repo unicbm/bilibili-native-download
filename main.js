@@ -1,6 +1,7 @@
 'use strict';
+const { createDownloadTag, createSafeFileTarget, saveError } = require('./safe-target.js');
 
-function startBiliDownloader({ win, doc, network, media, core, range, pickSaveFile, getValue, setValue, menu } = {}) {
+function startBiliDownloader({ win, doc, network, media, core, range, pickDirectory, getValue, setValue, menu } = {}) {
   const C=core;
   const MiB=1024*1024;
   const ICON='<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 3v12m-4.5-4.5L12 15l4.5-4.5M4 15.5v3A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5v-3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -38,7 +39,7 @@ function startBiliDownloader({ win, doc, network, media, core, range, pickSaveFi
       <div class="fields">
         <label class="field">音轨<select data-id="audio" aria-label="音轨"></select></label>
         <label class="field">下载并发<select data-id="concurrency" aria-label="下载并发"><option value="1">1 路</option><option value="2">2 路</option><option value="4">4 路 · 默认</option><option value="6">6 路</option><option value="8">8 路</option></select></label>
-        <label class="field save-field">保存方式<select data-id="save-mode" aria-label="保存方式"><option value="disk">直接写入磁盘 · 适合长视频</option><option value="memory">内存下载 · 最大 256 MiB</option></select></label>
+        <label class="field save-field">保存方式<select data-id="save-mode" aria-label="保存方式"><option value="disk">直接写入磁盘 · 另存新文件</option><option value="memory">内存下载 · 最大 256 MiB</option></select></label>
       </div>
       <div class="linebox"><div class="line-title"><span>CDN 自动选线</span><button class="text-button" data-id="reprobe">重新测速</button></div><div class="routes" data-id="routes">从可用地址中选择速度更快的线路。</div></div>
     </details>
@@ -53,7 +54,7 @@ function startBiliDownloader({ win, doc, network, media, core, range, pickSaveFi
   const entryStyle=doc.createElement('style');entryStyle.textContent=`#bnd-download-entry{display:inline-flex;align-items:center;justify-content:center;gap:7px;margin:0 0 0 24px;padding:0;border:0;background:transparent;color:var(--text2,#61666d);font:inherit;font-size:14px;line-height:28px;white-space:nowrap;cursor:pointer;vertical-align:middle;flex-shrink:0}#bnd-download-entry:hover,#bnd-download-entry[data-busy="true"],#bnd-download-entry[aria-expanded="true"]{color:var(--brand_blue,#00aeec)}#bnd-download-entry:focus-visible{outline:2px solid var(--brand_blue,#00aeec);outline-offset:4px;border-radius:3px}#bnd-download-entry svg{width:27px;height:27px} @media(max-width:1100px){#bnd-download-entry{margin-left:16px;gap:5px}}`;
   (doc.head||doc.documentElement).append(entryStyle);
   el('concurrency').value=String(concurrency);
-  if(typeof pickSaveFile!=='function') { el('save-mode').value='memory';el('save-mode').options[0].disabled=true; }
+  if(typeof pickDirectory!=='function') { el('save-mode').value='memory';el('save-mode').options[0].disabled=true; }
 
   const currentVideo=()=>manifest?.videos.find(v=>v.key===selectedKey);
   const currentAudio=()=>manifest?.audios.find(a=>a.key===audioKey)||null;
@@ -159,17 +160,24 @@ function startBiliDownloader({ win, doc, network, media, core, range, pickSaveFi
   }
   async function download(){
     if(disposed||activeJob||!prepared||!meta)return;
-    const pack=prepared,v=currentVideo(),name=C.filename(meta,v),memory=el('save-mode').value==='memory';
+    const pack=prepared,v=currentVideo(),fileMeta=meta,memory=el('save-mode').value==='memory';
+    const newName=()=>C.filename(fileMeta,v,createDownloadTag({crypto:win.crypto}));
+    let name='';
     const total=pack.video.size+(pack.audio?.size||0);
     if(Date.now()-pack.time>180000){prepStatus='地址已刷新，请完成测速后再点击下载。';void prepareSelection({refresh:true});return;}
     if(memory&&total>248*MiB){setError('选定音视频超过内存下载上限，请选择“直接写入磁盘”。');return;}
-    setError();savedStatus='';prepStatus='';revokeBlob();
-    const controller=new AbortController();let target=null,engineOwnsTarget=false,stopSource=null;const job={controller,label:memory?'准备下载…':'请选择保存位置…',route:'',audioRoute:'',started:Date.now(),lastBytes:0,lastTime:Date.now(),speed:0,output:0,percent:0};
+    setError();savedStatus='';prepStatus='';revokeBlob();el('progress').hidden=true;
+    const controller=new AbortController();let target=null,engineOwnsTarget=false,stopSource=null,keepPrepared=false,phase=memory?'memory':'picker';const job={controller,label:memory?'准备下载…':'请选择保存文件夹…',route:'',audioRoute:'',started:Date.now(),lastBytes:0,lastTime:Date.now(),speed:0,output:0,percent:0};
     activeJob=job;updateControls();
     try{
       // This call MUST precede every await: the browser needs the click's activation.
-      const picked=memory?null:pickSaveFile({suggestedName:name,types:[{description:'MP4 视频',accept:{'video/mp4':['.mp4']}}]});
-      if(memory)target=C.memoryTarget();else{const handle=await picked;if(controller.signal.aborted)throw new DOMException('操作已取消','AbortError');target=await handle.createWritable();}
+      const picked=memory?null:pickDirectory({id:'bnd-downloads',mode:'readwrite'});
+      if(memory){name=newName();target=C.memoryTarget();}
+      else{
+        const directory=await picked;phase='target';
+        if(controller.signal.aborted)throw new DOMException('操作已取消','AbortError');
+        target=await createSafeFileTarget(directory,newName,{signal:controller.signal});name=target.name;
+      }
       if(controller.signal.aborted)throw new DOMException('操作已取消','AbortError');
       stopSource=()=>pack.controller.abort();controller.signal.addEventListener('abort',stopSource,{once:true});
       job.label='下载并合成 MP4…';job.started=Date.now();job.lastTime=Date.now();job.lastBytes=pack.video.stats.downloadedBytes+(pack.audio?.stats.downloadedBytes||0);
@@ -182,22 +190,30 @@ function startBiliDownloader({ win, doc, network, media, core, range, pickSaveFi
         el('metrics-right').textContent=`${job.percent}% · ${Math.floor((now-job.started)/1000)} 秒`;
         if(job.route)el('routes').textContent=[job.route,job.audioRoute].filter(Boolean).join('\n');
       },500);
-      engineOwnsTarget=true;
+      engineOwnsTarget=true;phase='mux';
       const result=await media.muxToTarget({videoSource:pack.video,audioSource:pack.audio,target,signal:controller.signal,onProgress:p=>{
         job.output=p.outputBytes||0;job.percent=p.stage==='done'?100:Math.min(99,Math.max(job.percent,Math.floor((p.seconds||0)/(p.duration||manifest.duration||1)*100)));
         job.label=p.stage==='finalizing'?'正在写入 MP4 索引…':p.stage==='inspecting'?'正在检查音视频轨道…':'下载并合成 MP4…';
         el('bar').style.width=`${job.percent}%`;el('status').textContent=job.label;
       }});
-      if(controller.signal.aborted||disposed)throw new DOMException('操作已取消','AbortError');
+      if((controller.signal.aborted&&!target.committed)||disposed)throw new DOMException('操作已取消','AbortError');
       el('bar').style.width='100%';el('metrics-left').textContent=`文件大小 ${C.bytes(result.outputBytes)}`;el('metrics-right').textContent=`完成 · ${Math.floor((Date.now()-job.started)/1000)} 秒`;
       if(memory){const blob=target.getBlob();if(!blob)throw new Error('内存文件生成失败。');blobURL=win.URL.createObjectURL(blob);el('save-blob').hidden=false;el('save-blob').onclick=()=>{const link=doc.createElement('a');link.href=blobURL;link.download=name;doc.body.append(link);link.click();link.remove();};savedStatus='下载完成，点击“保存 MP4”保存文件。';}
       else savedStatus=`已保存：${name}`;
     }catch(error){if(!engineOwnsTarget&&target){try{await target.abort(error);}catch{}}
-      if(error?.name==='AbortError'||controller.signal.aborted)savedStatus='下载已取消。';else setError(C.safeError(error));
+      const cancelled=controller.signal.aborted||(phase==='picker'&&error?.name==='AbortError');
+      if(cancelled)savedStatus='下载已取消。';
+      else{
+        setError(C.safeError(!memory&&phase!=='mux'?saveError(error):error));
+        // A failed directory/target setup has not consumed the media. A fresh
+        // click may choose another directory without reparsing or re-probing.
+        keepPrepared=!engineOwnsTarget&&!disposed&&!pack.controller.signal.aborted;
+        prepStatus=keepPrepared?'未开始下载。请再次点击“下载 MP4”重试。':'下载未完成，请点击“重新解析”后重试。';
+      }
     }finally{
       if(stopSource)controller.signal.removeEventListener('abort',stopSource);
       if(tickTimer)win.clearInterval(tickTimer);tickTimer=null;
-      clearPrepared();pack.controller.abort();activeJob=null;updateControls();
+      if(!keepPrepared){clearPrepared();pack.controller.abort();}activeJob=null;updateControls();
       // A new click is required before another network operation or file save.
       if(!blobURL)el('download').textContent='下载 MP4';
     }

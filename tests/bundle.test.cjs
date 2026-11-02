@@ -18,7 +18,7 @@ const encodedHash = (filename, stream) => run('ffmpeg', ['-v', 'error', '-i', fi
 test('actual release userscript: toolbar -> authenticated WBI parse -> GM ranges -> tree-shaken MP4 mux -> saved audiovisual file', async t => {
   assert.ok(fs.existsSync(bundlePath), 'Run npm run build to produce the release userscript');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bili-release-smoke-'));
-  const videoFile = path.join(dir, 'video.mp4'), audioFile = path.join(dir, 'audio.mp4'), outputFile = path.join(dir, 'output.mp4');
+  const videoFile = path.join(dir, 'video.mp4'), audioFile = path.join(dir, 'audio.mp4'), outputFile = path.join(dir, 'output.mp4'), stagingFile = path.join(dir, 'output.swap');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=30', '-t', '3', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-bf', '3', '-g', '30', '-threads', '2', '-movflags', '+frag_keyframe+empty_moov+default_base_moof', videoFile]);
   ffmpeg(['-f', 'lavfi', '-i', 'sine=frequency=997:sample_rate=48000', '-t', '3', '-vn', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+frag_keyframe+empty_moov+default_base_moof', audioFile]);
@@ -102,8 +102,8 @@ test('actual release userscript: toolbar -> authenticated WBI parse -> GM ranges
     pendingGM.add(handle);
     return handle;
   };
-  let targetCloses = 0, targetAborts = 0, pickerCalls = 0, writableCalls = 0, maxWritten = 0;
-  let outputFD = null, finished = false, suggestedName = '';
+  let targetCloses = 0, targetAborts = 0, pickerCalls = 0, writableCalls = 0, maxWritten = 0, unsafePickerCalls = 0;
+  let outputFD = null, finished = false, savedName = '';
   t.after(() => { pendingGM.forEach(handle => handle.abort()); if (outputFD !== null && !finished) fs.closeSync(outputFD); });
   const nativeWindow = {};
   const target = {
@@ -115,25 +115,54 @@ test('actual release userscript: toolbar -> authenticated WBI parse -> GM ranges
       fs.writeSync(outputFD, bytes, 0, bytes.length, position);
       maxWritten = Math.max(maxWritten, position + bytes.length);
     },
-    async close() { assert.equal(this, target); targetCloses++; if (!finished) fs.closeSync(outputFD); finished = true; },
-    async abort() { assert.equal(this, target); targetAborts++; if (!finished) fs.closeSync(outputFD); finished = true; fs.rmSync(outputFile, { force: true }); }
+    async close() {
+      assert.equal(this, target); targetCloses++;
+      assert.equal(fs.statSync(outputFile).size, 0, 'all media bytes are still in the private staging file');
+      if (!finished) fs.closeSync(outputFD);
+      fs.renameSync(stagingFile, outputFile); finished = true;
+    },
+    async abort() { assert.equal(this, target); targetAborts++; if (!finished) fs.closeSync(outputFD); finished = true; fs.rmSync(stagingFile, { force: true }); }
   };
-  const fileHandle = { async createWritable() {
-    assert.equal(this, fileHandle);
-    writableCalls++; outputFD = fs.openSync(outputFile, 'w');
-    return target;
+  const fileHandle = {
+    name: '',
+    async getFile() {
+      assert.equal(this, fileHandle);
+      const stat = fs.statSync(outputFile);
+      return { name: fileHandle.name, size: stat.size, lastModified: stat.mtimeMs };
+    },
+    async createWritable(options) {
+      assert.equal(this, fileHandle);
+      assert.equal(options.keepExistingData, false);
+      assert.equal(options.mode, 'exclusive');
+      writableCalls++; outputFD = fs.openSync(stagingFile, 'wx');
+      return target;
+    },
+  };
+  const createdNames = new Set();
+  const directory = { async getFileHandle(name, options = {}) {
+    assert.equal(this, directory);
+    if (!createdNames.has(name)) {
+      if (!options.create) throw new DOMException('No file', 'NotFoundError');
+      assert.equal(createdNames.size, 0, 'only one output is needed for this download');
+      createdNames.add(name); savedName = name; fileHandle.name = name;
+      fs.writeFileSync(outputFile, Buffer.alloc(0));
+    }
+    return fileHandle;
   } };
-  nativeWindow.showSaveFilePicker = function (options) {
-    if (this !== nativeWindow) throw new TypeError("Failed to execute 'showSaveFilePicker' on 'Window': Illegal invocation");
-    pickerCalls++; suggestedName = options.suggestedName;
-    return Promise.resolve(fileHandle);
+  nativeWindow.showDirectoryPicker = function (options) {
+    if (this !== nativeWindow) throw new TypeError("Failed to execute 'showDirectoryPicker' on 'Window': Illegal invocation");
+    assert.equal(options.id, 'bnd-downloads');
+    assert.equal(options.mode, 'readwrite');
+    pickerCalls++;
+    return Promise.resolve(directory);
   };
   win.unsafeWindow = nativeWindow;
   const sandboxWindow = new Proxy(nativeWindow, {});
-  win.showSaveFilePicker = function (options) {
-    return sandboxWindow.showSaveFilePicker(options);
+  win.showDirectoryPicker = function (options) {
+    return sandboxWindow.showDirectoryPicker(options);
   };
-  assert.throws(() => win.showSaveFilePicker({}), /Illegal invocation/, 'release fixture reproduces the old sandbox Window receiver bug');
+  win.showSaveFilePicker = function () { unsafePickerCalls++; throw new Error('Never ask the user to replace an existing video'); };
+  assert.throws(() => win.showDirectoryPicker({}), /Illegal invocation/, 'release fixture reproduces the old sandbox Window receiver bug');
   const bundle = fs.readFileSync(bundlePath, 'utf8');
   assert.match(bundle, /==UserScript==/);
   assert.match(bundle, /^\/\/ @grant\s+unsafeWindow$/m, 'the installed userscript grants access to its native picker owner');
@@ -178,7 +207,10 @@ test('actual release userscript: toolbar -> authenticated WBI parse -> GM ranges
   assert.equal(targetCloses, 1);
   assert.equal(targetAborts, 0);
   assert.equal(maxWritten, fs.statSync(outputFile).size);
-  assert.match(suggestedName, /_BV1BundleSmoke_P2_1080P 高清_H\.264\.mp4$/);
+  assert.match(savedName, /_BV1BundleSmoke_P2_1080P 高清_H\.264_/);
+  assert.match(savedName, /\.mp4$/);
+  assert.equal(el('status').textContent, `已保存：${savedName}`);
+  assert.equal(unsafePickerCalls, 0);
   assert.equal(activeGM, 0);
   assert.ok(peakGM <= 4);
   assert.equal(errors.length, 0);
