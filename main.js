@@ -7,49 +7,51 @@ function startBiliDownloader({ win, doc, network, media, core, range, pickSaveFi
   let meta=null, manifest=null, selectedKey='', audioKey='', preparation=null, prepared=null;
   let analysisController=null, activeJob=null, disposed=false, sessionSerial=0, prepareSerial=0;
   let blobURL=null, lastHref=win.location.href, tickTimer=null, mountTimer=null;
-  let previousFocus=null, prepStatus='', savedStatus='', failMessage='';
+  let analysisIdentity='', prepStatus='', savedStatus='', failMessage='';
   let concurrency=4;
   try { const n=Number(getValue?.('bnd.concurrent',4)); if([1,2,4,6,8].includes(n))concurrency=n; } catch { /* defaults */ }
-  const host=doc.createElement('div');host.id='bnd-panel-host';
+  const host=doc.createElement('div');host.id='bnd-panel-host';host.hidden=true;
   const shadow=host.attachShadow({mode:'open'});
   shadow.innerHTML=`<style>
-    :host{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;color-scheme:light dark;--bg:#fff;--text:#18191c;--muted:#61666d;--line:#e3e5e7;--soft:#f6f7f8;--blue:#00aeec;--blue-bg:#e8f8ff;--red:#b42318;--green:#178653}
-    *{box-sizing:border-box}button,input,select{font:inherit}button,select{cursor:pointer}button:disabled,select:disabled,input:disabled{cursor:default;opacity:.5}
-    dialog{position:fixed;inset:0;width:min(760px,calc(100vw - 32px));max-height:calc(100vh - 40px);margin:auto;padding:0;border:1px solid var(--line);border-radius:16px;color:var(--text);background:var(--bg);box-shadow:0 16px 72px #0003;font-size:14px;line-height:1.5;overflow:auto}
-    dialog::backdrop{background:#0005;backdrop-filter:blur(2px)}
-    .head{display:flex;align-items:center;justify-content:space-between;padding:22px 26px 14px;gap:16px}.heading{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:600}.heading svg{color:var(--blue);width:24px;height:24px}.close{border:0;background:transparent;color:var(--muted);font-size:25px;width:32px;height:32px;border-radius:6px;line-height:1}
-    .close:hover{background:var(--soft)}.body{padding:0 26px 24px}.title{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 0 16px}.subhead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 10px;font-weight:600}.badge{font-size:12px;font-weight:400;color:var(--muted);background:var(--soft);padding:3px 8px;border-radius:4px}
-    .table-wrap{max-height:252px;overflow:auto;border:1px solid var(--line);border-radius:9px}table{border-collapse:collapse;width:100%;font-size:13px}thead{position:sticky;top:0;background:var(--soft);z-index:1}th{text-align:left;font-weight:400;color:var(--muted);padding:10px 12px}td{padding:10px 12px;border-top:1px solid var(--line);white-space:nowrap}th:first-child,td:first-child{width:35px;padding-right:0}tr.chosen{background:var(--blue-bg)}tbody tr:hover{background:var(--soft)}tbody tr.chosen:hover{background:var(--blue-bg)}input[type=radio]{accent-color:var(--blue);margin:0;cursor:pointer}.resolution{font-weight:600}.dims{display:block;color:var(--muted);font-size:11px}.codec{border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px}.size{text-align:right;font-variant-numeric:tabular-nums}
-    .settings{display:grid;grid-template-columns:1.35fr .65fr;gap:14px;margin-top:16px}.field{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:12px}select{width:100%;height:36px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);padding:0 10px;outline-offset:2px}.save-field{margin-top:12px}.hint{font-size:12px;color:var(--muted);margin:8px 0 0}.note{color:var(--muted);font-size:12px;line-height:1.6}.linebox{background:var(--soft);border-radius:9px;padding:12px 14px;margin:16px 0 0}.line-title{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}.text-button{border:0;background:transparent;color:var(--blue);padding:2px;font-size:12px}.routes{font-size:11px;color:var(--muted);margin:8px 0 0;overflow-wrap:anywhere;line-height:1.7}.total{font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}.status{margin-top:14px;font-size:13px;min-height:20px}.error{color:var(--red);background:#ffebe8;border-radius:7px;padding:10px 12px;font-size:13px;margin-top:12px;white-space:pre-wrap}.success{color:var(--green)}.bar{height:5px;border-radius:5px;overflow:hidden;background:var(--line);margin:9px 0}.bar>div{height:100%;width:0;background:var(--blue);transition:width .15s}.metrics{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}.foot{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:20px}.actions{display:flex;gap:8px;flex-shrink:0}.primary,.secondary{min-height:38px;border-radius:7px;padding:7px 17px;font-weight:500;font-size:14px}.primary{background:var(--blue);border:1px solid var(--blue);color:#fff}.primary:hover:enabled{filter:brightness(1.06)}.secondary{background:var(--bg);color:var(--muted);border:1px solid var(--line)}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.empty{padding:28px 8px;color:var(--muted);text-align:center}[hidden]{display:none!important}
-    @media(prefers-color-scheme:dark){:host{--bg:#202124;--text:#e8e8ec;--muted:#a4a8ad;--line:#3a3d42;--soft:#292c30;--blue-bg:#173947;--red:#ffb4aa;--green:#7cddb0}.error{background:#4c2421}}
-    @media(max-width:560px){.head{padding:18px 16px 10px}.body{padding:0 16px 18px}.heading{font-size:18px}.settings{grid-template-columns:1fr 1fr}.foot{align-items:flex-end}.foot .note{max-width:45%}th,td{padding:9px 7px}.dims{font-size:10px}.codec{font-size:10px}.metrics{flex-wrap:wrap}}
+    /* Inherit Bilibili's page theme, including themes supplied by other scripts. */
+    :host{display:block;min-width:0;margin:0 0 16px;font:inherit;color:var(--text1,#18191c);--bnd-bg:var(--bg1,#fff);--bnd-text:var(--text1,#18191c);--bnd-muted:var(--text2,#61666d);--bnd-dim:var(--text3,#9499a0);--bnd-line:var(--line_regular,#e3e5e7);--bnd-soft:var(--graph_bg_thin,var(--bg2,#f6f7f8));--bnd-blue:var(--brand_blue,#00aeec);--bnd-selected:var(--brand_blue_thin,#dff6fd)}
+    :host([hidden]){display:none!important}
+    *{box-sizing:border-box}button,input,select{font:inherit}button,select,summary{cursor:pointer}button:disabled,select:disabled,input:disabled{cursor:default;opacity:.5}[hidden]{display:none!important}
+    .panel{position:static;width:100%;min-width:0;padding:16px 0;border-bottom:1px solid var(--line_light,var(--bnd-line));background:transparent;color:var(--bnd-text);font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+    .head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:6px}.heading{display:flex;align-items:center;gap:8px;min-width:0}.heading h2{font-size:16px;line-height:24px;font-weight:500;margin:0}.format{border:1px solid var(--bnd-line);border-radius:3px;color:var(--bnd-dim);font-size:11px;line-height:16px;padding:0 4px}.collapse{display:inline-flex;align-items:center;gap:4px;border:0;padding:4px 0 4px 8px;background:transparent;color:var(--bnd-muted);font-size:12px;white-space:nowrap}.collapse:hover{color:var(--bnd-blue)}.collapse svg{width:14px;height:14px}
+    .title{color:var(--bnd-dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 0 12px}
+    .table-wrap{max-height:224px;overflow:auto;border:1px solid var(--bnd-line);border-radius:6px;overscroll-behavior:contain;scrollbar-width:thin}table{border-collapse:collapse;width:100%;font-size:13px}thead{position:sticky;top:0;background:var(--bnd-soft);z-index:1}th{text-align:left;font-weight:400;color:var(--bnd-muted);padding:7px 12px}td{padding:8px 12px;border-top:1px solid var(--bnd-line);white-space:nowrap}th:first-child,td:first-child{width:34px;padding-right:0}tr.chosen{background:var(--bnd-selected)}tbody tr:hover{background:var(--bnd-soft)}tbody tr.chosen:hover{background:var(--bnd-selected)}input[type=radio]{accent-color:var(--bnd-blue);margin:0;cursor:pointer}.resolution{font-weight:500}.dims{color:var(--bnd-dim);font-size:11px;margin-left:8px}.codec{color:var(--bnd-muted);font-size:12px}.size{text-align:right;font-variant-numeric:tabular-nums}
+    .hint{font-size:12px;color:var(--bnd-dim);margin:7px 0 0}.note{color:var(--bnd-muted);font-size:12px;line-height:1.6}.settings{margin-top:12px;border-top:1px solid var(--line_light,var(--bnd-line))}.settings>summary{padding:10px 0;color:var(--bnd-muted);font-size:12px;width:fit-content}.settings>summary:hover{color:var(--bnd-blue)}.settings>summary span{color:var(--bnd-dim);margin-left:8px}
+    .fields{display:grid;grid-template-columns:1fr .65fr 1.5fr;gap:12px;padding:2px 0 12px}.field{display:flex;flex-direction:column;gap:5px;min-width:0;color:var(--bnd-muted);font-size:12px}select{min-width:0;width:100%;height:32px;border:1px solid var(--bnd-line);border-radius:4px;background:var(--bnd-bg);color:var(--bnd-text);padding:0 8px;outline-offset:2px}.linebox{background:var(--bnd-soft);border-radius:4px;padding:10px 12px;margin-bottom:12px}.line-title{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;color:var(--bnd-muted)}.text-button{border:0;background:transparent;color:var(--bnd-blue);padding:2px;font-size:12px}.routes{font-size:12px;color:var(--bnd-dim);margin:5px 0 0;overflow-wrap:anywhere;line-height:1.7}
+    .foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:4px}.summary{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;min-width:0}.total{font-weight:500;font-variant-numeric:tabular-nums}.actions{display:flex;gap:8px;flex-shrink:0}.primary,.secondary{min-height:32px;border-radius:4px;padding:5px 14px;font-size:13px;line-height:20px}.primary{background:var(--bnd-blue);border:1px solid var(--bnd-blue);color:var(--text_white,#fff)}.primary:hover:enabled{background:var(--Lb5,#40c5f1);border-color:var(--Lb5,#40c5f1)}.secondary{background:var(--bnd-bg);color:var(--bnd-muted);border:1px solid var(--bnd-line)}.secondary:hover:enabled{color:var(--bnd-blue);border-color:var(--bnd-blue)}
+    .status{margin-top:10px;font-size:12px;color:var(--bnd-muted);overflow-wrap:anywhere}.status:empty{display:none}.success{color:var(--brand_green,#2ac864)}.error{color:var(--stress_red,#f85a54);font-size:12px;margin-top:10px;white-space:pre-wrap;overflow-wrap:anywhere}.bar{height:4px;border-radius:2px;overflow:hidden;background:var(--bnd-line);margin:8px 0}.bar>div{height:100%;width:0;background:var(--bnd-blue);transition:width .15s}.metrics{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--bnd-dim);font-variant-numeric:tabular-nums}.empty{padding:22px 8px;color:var(--bnd-muted);text-align:center}
+    button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--bnd-blue);outline-offset:3px}
+    @container bnd-panel (max-width:600px){.dims{display:block;margin-left:0}.fields{grid-template-columns:1fr 1fr}.save-field{grid-column:1/-1}.foot{flex-wrap:wrap}.summary{width:100%}.settings>summary span{display:none}th,td{padding-left:8px;padding-right:8px}.metrics{flex-wrap:wrap}}
+    :host{container-type:inline-size;container-name:bnd-panel}
   </style>
-  <dialog aria-labelledby="bnd-heading">
-    <div class="head"><div class="heading" id="bnd-heading">${ICON}<span>下载视频</span></div><button class="close" data-id="close" aria-label="关闭下载面板" title="关闭">×</button></div>
-    <div class="body">
-      <p class="title" data-id="title">正在读取当前视频…</p>
-      <div class="subhead"><span>选择画质</span><span class="badge" data-id="session">当前浏览器会话</span></div>
-      <div class="table-wrap"><table><thead><tr><th></th><th>清晰度</th><th>编码</th><th>帧率</th><th class="size">音视频体积</th></tr></thead><tbody data-id="rows"></tbody></table><div class="empty" data-id="empty">解析中…</div></div>
-      <p class="hint" data-id="quality-hint">≈ 为码率估算；选中后读取文件头，获取准确体积。</p>
-      <div class="settings">
+  <section class="panel" role="region" aria-labelledby="bnd-heading">
+    <div class="head"><div class="heading"><h2 id="bnd-heading">下载视频</h2><span class="format">MP4</span></div><button class="collapse" data-id="close" aria-label="收起下载面板">收起<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 10 4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+    <p class="title" data-id="title">正在读取当前视频…</p>
+    <div class="table-wrap"><table aria-label="可下载的画质"><thead><tr><th scope="col" aria-label="选择"></th><th scope="col">清晰度</th><th scope="col">编码</th><th scope="col">帧率</th><th scope="col" class="size">音视频体积</th></tr></thead><tbody data-id="rows"></tbody></table><div class="empty" data-id="empty">解析中…</div></div>
+    <p class="hint" data-id="quality-hint">≈ 为估算体积，选中后读取准确大小。</p>
+    <details class="settings"><summary>下载设置<span>音轨、并发与保存方式</span></summary>
+      <div class="fields">
         <label class="field">音轨<select data-id="audio" aria-label="音轨"></select></label>
         <label class="field">下载并发<select data-id="concurrency" aria-label="下载并发"><option value="1">1 路</option><option value="2">2 路</option><option value="4">4 路 · 默认</option><option value="6">6 路</option><option value="8">8 路</option></select></label>
+        <label class="field save-field">保存方式<select data-id="save-mode" aria-label="保存方式"><option value="disk">直接写入磁盘 · 适合长视频</option><option value="memory">内存下载 · 最大 256 MiB</option></select></label>
       </div>
-      <label class="field save-field">保存方式<select data-id="save-mode" aria-label="保存方式"><option value="disk">直接写入磁盘 · 适合长视频</option><option value="memory">内存下载 · 最大 256 MiB</option></select></label>
-      <div class="linebox"><div class="line-title"><span>CDN 自动选线</span><button class="text-button" data-id="reprobe">重新测速</button></div><div class="routes" data-id="routes">从播放接口提供的地址中选择，每条线路最多测速 256 KiB。</div><div class="line-title" style="margin-top:9px"><span class="note">选定音视频</span><span class="total" data-id="total">—</span></div></div>
-      <div class="status" data-id="status" role="status" aria-live="polite"></div>
-      <div data-id="progress" hidden><div class="bar"><div data-id="bar"></div></div><div class="metrics"><span data-id="metrics-left"></span><span data-id="metrics-right"></span></div></div>
-      <div class="error" data-id="error" role="alert" hidden></div>
-      <div class="foot"><div class="note">MP4 · 本地无损合成<br>自动沿用当前登录权限</div><div class="actions"><button class="secondary" data-id="refresh">重新解析</button><button class="secondary" data-id="cancel" hidden>取消</button><button class="primary" data-id="save-blob" hidden>保存 MP4</button><button class="primary" data-id="download" disabled>下载 MP4</button></div></div>
-    </div>
-  </dialog>`;
-  doc.documentElement.append(host);
+      <div class="linebox"><div class="line-title"><span>CDN 自动选线</span><button class="text-button" data-id="reprobe">重新测速</button></div><div class="routes" data-id="routes">从可用地址中选择速度更快的线路。</div></div>
+    </details>
+    <div class="foot"><div class="summary"><span class="note">音视频体积</span><span class="total" data-id="total">—</span></div><div class="actions"><button class="secondary" data-id="refresh">重新解析</button><button class="secondary" data-id="cancel" hidden>取消</button><button class="primary" data-id="save-blob" hidden>保存 MP4</button><button class="primary" data-id="download" disabled>下载 MP4</button></div></div>
+    <div class="status" data-id="status" role="status" aria-live="polite"></div>
+    <div data-id="progress" hidden><div class="bar"><div data-id="bar"></div></div><div class="metrics"><span data-id="metrics-left"></span><span data-id="metrics-right"></span></div></div>
+    <div class="error" data-id="error" role="alert" hidden></div>
+  </section>`;
   const el=id=>shadow.querySelector(`[data-id="${id}"]`);
-  const dialog=shadow.querySelector('dialog');
-  const entry=doc.createElement('button');entry.id='bnd-download-entry';entry.type='button';entry.setAttribute('aria-haspopup','dialog');entry.setAttribute('aria-label','下载视频');
+  const entry=doc.createElement('button');entry.id='bnd-download-entry';entry.type='button';entry.setAttribute('aria-expanded','false');entry.setAttribute('aria-controls',host.id);entry.setAttribute('aria-label','下载视频');
   entry.innerHTML=`${ICON}<span>下载</span>`;
-  const entryStyle=doc.createElement('style');entryStyle.textContent=`#bnd-download-entry{display:inline-flex;align-items:center;justify-content:center;gap:7px;margin:0 0 0 24px;padding:0;border:0;background:transparent;color:var(--text2,#61666d);font:14px/28px "PingFang SC",HarmonyOS_Regular,"Microsoft YaHei",sans-serif;white-space:nowrap;cursor:pointer;vertical-align:middle;flex-shrink:0}#bnd-download-entry:hover,#bnd-download-entry[data-busy="true"]{color:var(--brand_blue,#00aeec)}#bnd-download-entry:focus-visible{outline:2px solid #00aeec;outline-offset:4px;border-radius:3px}#bnd-download-entry svg{width:27px;height:27px} @media(max-width:1100px){#bnd-download-entry{margin-left:16px;gap:5px}}`;
-  doc.documentElement.append(entryStyle);
+  const entryStyle=doc.createElement('style');entryStyle.textContent=`#bnd-download-entry{display:inline-flex;align-items:center;justify-content:center;gap:7px;margin:0 0 0 24px;padding:0;border:0;background:transparent;color:var(--text2,#61666d);font:inherit;font-size:14px;line-height:28px;white-space:nowrap;cursor:pointer;vertical-align:middle;flex-shrink:0}#bnd-download-entry:hover,#bnd-download-entry[data-busy="true"],#bnd-download-entry[aria-expanded="true"]{color:var(--brand_blue,#00aeec)}#bnd-download-entry:focus-visible{outline:2px solid var(--brand_blue,#00aeec);outline-offset:4px;border-radius:3px}#bnd-download-entry svg{width:27px;height:27px} @media(max-width:1100px){#bnd-download-entry{margin-left:16px;gap:5px}}`;
+  (doc.head||doc.documentElement).append(entryStyle);
   el('concurrency').value=String(concurrency);
   if(typeof pickSaveFile!=='function') { el('save-mode').value='memory';el('save-mode').options[0].disabled=true; }
 
@@ -137,7 +139,7 @@ function startBiliDownloader({ win, doc, network, media, core, range, pickSaveFi
     const controller=new AbortController();analysisController=controller;manifest=null;meta=null;setError();savedStatus='';prepStatus='正在解析当前视频…';
     el('empty').textContent='正在读取视频信息和可用清晰度…';el('progress').hidden=true;el('total').textContent='—';renderRows();updateControls();
     try{
-      const href=win.location.href;
+      const href=win.location.href;analysisIdentity=C.pageIdentity(href).key;
       const resolved=await network.getMeta(href,controller.signal);
       const parsed=C.normalizePlay(await network.getPlay(resolved,{signal:controller.signal}));
       if(controller.signal.aborted||serial!==sessionSerial)return;
@@ -202,26 +204,35 @@ function startBiliDownloader({ win, doc, network, media, core, range, pickSaveFi
   }
   function open(){
     if(disposed)return;
-    previousFocus=doc.activeElement;if(!dialog.open)dialog.showModal();
+    mount();host.hidden=false;entry.setAttribute('aria-expanded','true');
     if(activeJob){updateControls();return;}
-    let same=false;try{same=meta?.identity===C.pageIdentity(win.location.href).key;}catch{}
-    if(!same||!manifest)void analyze();else if(!prepared&&!blobURL)void prepareSelection({refresh:true});
+    let pageKey='';try{pageKey=C.pageIdentity(win.location.href).key;}catch{}
+    if(analysisController&&!analysisController.signal.aborted&&analysisIdentity===pageKey)return;
+    const same=meta?.identity===pageKey;
+    // Keep completed/cancelled status visible when the user unfolds the panel.
+    if(!same||!manifest)void analyze();else if(!prepared&&!blobURL&&!savedStatus&&(!preparation||preparation.signal.aborted))void prepareSelection({refresh:true});
   }
-  function close(){dialog.close();previousFocus?.focus?.();}
-  entry.addEventListener('click',open);el('close').addEventListener('click',close);
-  dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)close();}});
+  function close(){host.hidden=true;entry.setAttribute('aria-expanded','false');}
+  entry.addEventListener('click',()=>host.hidden?open():close());
+  el('close').addEventListener('click',()=>{close();entry.focus();});
   el('refresh').addEventListener('click',()=>void analyze());el('reprobe').addEventListener('click',()=>void prepareSelection({refresh:true}));
   el('audio').addEventListener('change',()=>{audioKey=el('audio').value;revokeBlob();renderRows();void prepareSelection();});
   el('concurrency').addEventListener('change',()=>{concurrency=Number(el('concurrency').value);try{setValue?.('bnd.concurrent',concurrency);}catch{}void prepareSelection();});
   el('download').addEventListener('click',()=>void download());el('cancel').addEventListener('click',()=>{if(activeJob){activeJob.label='正在取消…';activeJob.controller.abort();updateControls();}});
+  let mountedToolbar=null,mountedAfter=null;
+  function isMounted(){return entry.isConnected&&host.isConnected&&mountedAfter?.isConnected&&entry.parentElement===mountedToolbar&&mountedAfter.nextElementSibling===host;}
   function mount(){
-    if(disposed||entry.isConnected)return;
+    if(disposed)return;
     const toolbar=doc.querySelector('.video-toolbar-left-main')||doc.querySelector('.video-toolbar-left')||doc.querySelector('.video-toolbar-container');
-    if(toolbar)toolbar.append(entry);
+    if(!toolbar)return;
+    const anchor=toolbar.closest('.video-toolbar-container')||toolbar.closest('.video-toolbar-left')||toolbar;
+    if(entry.parentElement!==toolbar)toolbar.append(entry);
+    if(anchor.parentElement&&(host.parentElement!==anchor.parentElement||anchor.nextElementSibling!==host))anchor.after(host);
+    mountedToolbar=toolbar;mountedAfter=anchor;
   }
-  const observer=new win.MutationObserver(()=>{if(!entry.isConnected&&!mountTimer)mountTimer=win.setTimeout(()=>{mountTimer=null;mount();},100);});
+  const observer=new win.MutationObserver(()=>{if(!isMounted()&&!mountTimer)mountTimer=win.setTimeout(()=>{mountTimer=null;mount();},100);});
   observer.observe(doc.body||doc.documentElement,{childList:true,subtree:true});mount();
-  const routeTimer=win.setInterval(()=>{if(lastHref!==win.location.href){lastHref=win.location.href;if(!activeJob&&dialog.open)void analyze();else if(!activeJob){analysisController?.abort();cancelPreparation();meta=null;manifest=null;}}},1000);
+  const routeTimer=win.setInterval(()=>{if(lastHref!==win.location.href){lastHref=win.location.href;if(!activeJob&&!host.hidden)void analyze();else if(!activeJob){analysisController?.abort();cancelPreparation();meta=null;manifest=null;}}},1000);
   const beforeUnload=e=>{if(activeJob){e.preventDefault();e.returnValue='';}};
   win.addEventListener('beforeunload',beforeUnload);
   try{menu?.('下载当前 B站视频',open);}catch{}

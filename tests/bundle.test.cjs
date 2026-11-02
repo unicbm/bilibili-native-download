@@ -37,8 +37,6 @@ test('actual release userscript: toolbar -> authenticated WBI parse -> GM ranges
   for (const name of ['TextEncoder', 'TextDecoder', 'ReadableStream', 'WritableStream', 'TransformStream', 'AbortController', 'AbortSignal', 'DOMException', 'Response', 'Request', 'Headers', 'Blob', 'structuredClone']) {
     if (globalThis[name]) win[name] = globalThis[name];
   }
-  win.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
-  win.HTMLDialogElement.prototype.close = function () { this.open = false; };
   win.addEventListener('error', event => errors.push(event.error || new Error(event.message)));
   win.GM_getValue = (_key, fallback) => fallback;
   win.GM_setValue = () => {};
@@ -144,7 +142,15 @@ test('actual release userscript: toolbar -> authenticated WBI parse -> GM ranges
   assert.ok(button, 'Actual bundled entry point created its toolbar UI');
   assert.equal(button.parentElement, toolbar);
   assert.equal(menuCalls.length, 1);
-  const shadow = doc.querySelector('#bnd-panel-host').shadowRoot;
+  const panelHost = doc.querySelector('#bnd-panel-host');
+  const shadow = panelHost.shadowRoot;
+  assert.equal(doc.querySelector('.video-toolbar-container').nextElementSibling, panelHost);
+  assert.equal(panelHost.hidden, true);
+  assert.equal(button.getAttribute('aria-expanded'), 'false');
+  assert.equal(button.getAttribute('aria-controls'), panelHost.id);
+  assert.equal(button.hasAttribute('aria-haspopup'), false);
+  assert.equal(shadow.querySelector('dialog'), null);
+  assert.ok(shadow.querySelector('section[role="region"]'));
   const el = id => shadow.querySelector(`[data-id="${id}"]`);
   async function until(predicate, label) {
     const deadline = Date.now() + 10000;
@@ -157,7 +163,8 @@ test('actual release userscript: toolbar -> authenticated WBI parse -> GM ranges
   }
   button.click();
   await until(() => !el('download').disabled, 'parsing and CDN preparation');
-  assert.equal(shadow.querySelector('dialog').open, true);
+  assert.equal(panelHost.hidden, false);
+  assert.equal(button.getAttribute('aria-expanded'), 'true');
   assert.equal(el('rows').children.length, 1);
   assert.match(el('total').textContent, /已校验/);
   assert.match(el('title').textContent, /P2 第二段/);

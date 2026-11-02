@@ -33,19 +33,17 @@ function resolveMeta(url, title = '测试视频') {
   return { bvid: identity.id, aid: 1, cid: 100 + identity.p, page: identity.p, pageCount: 3, title, part: `片段${identity.p}`, identity: identity.key };
 }
 
-async function until(predicate, message = 'condition', attempts = 100) {
+async function until(predicate, message = 'condition', attempts = 100, interval = 0) {
   for (let i = 0; i < attempts; i++) {
     if (predicate()) return;
-    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => interval ? setTimeout(resolve, interval) : setImmediate(resolve));
   }
   assert.fail(`Timed out waiting for ${message}`);
 }
 
 function setup(t, options = {}) {
-  const dom = new JSDOM('<!doctype html><html><body><div class="video-toolbar-container"><div class="video-toolbar-left-main"><button class="video-share">分享</button></div></div></body></html>', { url: href });
+  const dom = new JSDOM('<!doctype html><html><body><main id="video-column"><div class="video-toolbar-container"><div class="video-toolbar-left-main"><button class="video-share">分享</button></div></div><div id="video-description">视频简介</div></main></body></html>', { url: href });
   const win = dom.window, doc = win.document;
-  win.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
-  win.HTMLDialogElement.prototype.close = function () { this.open = false; };
   const events = [], sources = [], requests = [], urls = [], revoked = [];
   win.URL.createObjectURL = blob => { const url = `blob:https://www.bilibili.com/test-${urls.length}`; urls.push({ url, blob }); return url; };
   win.URL.revokeObjectURL = url => revoked.push(url);
@@ -114,12 +112,25 @@ function setup(t, options = {}) {
   return { dom, win, doc, app, el, ready, events, sources, requests, urls, revoked, target, handle, saved, get writableCalls() { return writableCalls; } };
 }
 
-test('mounts download entry in the existing share toolbar and parses available qualities', async t => {
+test('download toggles an inline region after the toolbar and preserves the prepared selection', async t => {
   const h = setup(t);
+  const outer = h.doc.querySelector('.video-toolbar-container');
+  const host = h.doc.querySelector('#bnd-panel-host');
   assert.equal(h.app.entry.parentElement.className, 'video-toolbar-left-main');
   assert.equal(h.doc.querySelector('.video-share').nextElementSibling, h.app.entry);
   assert.equal(h.doc.querySelectorAll('#bnd-download-entry').length, 1);
-  await h.ready();
+  assert.equal(outer.nextElementSibling, host, 'panel belongs to the video column, after the whole toolbar');
+  assert.equal(host.nextElementSibling.id, 'video-description');
+  assert.equal(host.hidden, true);
+  assert.equal(h.app.entry.getAttribute('aria-expanded'), 'false');
+  assert.equal(h.app.entry.getAttribute('aria-controls'), host.id);
+  assert.equal(h.app.entry.hasAttribute('aria-haspopup'), false);
+  assert.equal(h.app.shadow.querySelector('dialog'), null);
+  assert.ok(h.app.shadow.querySelector('section[role="region"][aria-labelledby="bnd-heading"]'));
+  h.app.entry.click();
+  await until(() => h.app.getState().prepared, 'inline panel prepared');
+  assert.equal(host.hidden, false);
+  assert.equal(h.app.entry.getAttribute('aria-expanded'), 'true');
   assert.equal(h.el('rows').children.length, 2);
   assert.match(h.el('quality-hint').textContent, /接口未提供：4K/);
   assert.match(h.el('total').textContent, /已校验/);
@@ -130,6 +141,73 @@ test('mounts download entry in the existing share toolbar and parses available q
   await until(() => h.app.getState().prepared?.video.id === 64, '720p selection');
   assert.equal(h.app.getState().prepared.audio.id, 30280);
   assert.ok(h.sources.filter(s => s.id === 80).every(s => s.disposed === 1));
+  const pack = h.app.getState().prepared, requestCount = h.requests.length;
+  h.app.entry.click();
+  assert.equal(host.hidden, true);
+  assert.equal(h.app.entry.getAttribute('aria-expanded'), 'false');
+  h.app.entry.click();
+  assert.equal(host.hidden, false);
+  assert.equal(h.app.getState().prepared, pack);
+  assert.equal(pack.controller.signal.aborted, false);
+  assert.equal(h.requests.length, requestCount, 'folding does not reparse or restart prepared downloads');
+  h.el('close').click();
+  assert.equal(host.hidden, true);
+  assert.equal(h.app.entry.getAttribute('aria-expanded'), 'false');
+});
+
+test('folding and reopening during parsing or CDN preparation keeps the same work in flight', async t => {
+  const metadata = deferred(), videoReady = deferred();
+  let firstSource;
+  const h = setup(t, {
+    getMeta: () => metadata.promise,
+    buildSource(args, make) {
+      const source = make(args);
+      if (!firstSource) { firstSource = source; return videoReady.promise; }
+      return source;
+    },
+  });
+  h.app.entry.click();
+  assert.equal(h.requests.length, 1);
+  const signal = h.requests[0].signal;
+  h.app.close(); h.app.open(); h.app.open();
+  assert.equal(h.requests.length, 1);
+  assert.equal(signal.aborted, false);
+  metadata.resolve(resolveMeta(href));
+  await until(() => firstSource, 'pending CDN preparation');
+  const preparation = h.app.getState().preparation;
+  h.app.close(); h.app.open(); h.app.open();
+  assert.equal(h.app.getState().preparation, preparation);
+  assert.equal(preparation.signal.aborted, false);
+  assert.equal(h.sources.length, 1);
+  videoReady.resolve(firstSource);
+  await until(() => h.app.getState().prepared, 'resumed preparation');
+  assert.equal(h.sources.length, 2, 'video and audio are prepared once each');
+  assert.equal(h.app.getState().prepared.video, firstSource);
+});
+
+test('replacing the video column remounts both inline panel and entry without losing its state', async t => {
+  const h = setup(t);
+  await h.ready();
+  const host = h.doc.querySelector('#bnd-panel-host');
+  const pack = h.app.getState().prepared;
+  const column = h.doc.querySelector('#video-column');
+  const replacement = h.doc.createElement('div');
+  replacement.className = 'video-toolbar-container';
+  replacement.innerHTML = '<div class="video-toolbar-left-main"><button class="video-share">分享</button></div>';
+  const description = h.doc.createElement('div');
+  description.textContent = '新的视频简介';
+  column.replaceChildren(replacement, description);
+  assert.equal(host.isConnected, false);
+  await until(() => host.isConnected && h.app.entry.isConnected, 'toolbar and panel remount', 100, 5);
+  assert.equal(replacement.nextElementSibling, host);
+  assert.equal(host.nextElementSibling, description);
+  assert.equal(h.app.entry.parentElement, replacement.firstElementChild);
+  assert.equal(host.hidden, false);
+  assert.equal(h.app.entry.getAttribute('aria-expanded'), 'true');
+  assert.equal(h.app.getState().prepared, pack);
+  assert.equal(pack.controller.signal.aborted, false);
+  assert.equal(h.doc.querySelectorAll('#bnd-panel-host').length, 1);
+  assert.equal(h.doc.querySelectorAll('#bnd-download-entry').length, 1);
 });
 
 test('untrusted video title is rendered as text, never inserted as executable HTML', async t => {
@@ -196,11 +274,22 @@ test('save picker uses the native Window receiver synchronously, despite a users
   const call = h.events.find(e => e.type === 'mux').args;
   assert.equal(call.videoSource, pack.video);
   assert.equal(call.audioSource, pack.audio);
+  const job = h.app.getState().activeJob;
+  h.app.entry.click();
+  assert.equal(h.doc.querySelector('#bnd-panel-host').hidden, true);
+  assert.equal(job.controller.signal.aborted, false);
+  assert.equal(pack.controller.signal.aborted, false);
+  h.app.entry.click();
+  assert.equal(h.doc.querySelector('#bnd-panel-host').hidden, false);
+  assert.equal(h.app.getState().activeJob, job);
+  assert.equal(h.events.filter(e => e.type === 'mux').length, 1);
   // Disabled radio rows must not visually change the active download selection.
   const rows = h.el('rows').children;
   rows[1].querySelector('.resolution').click();
   assert.equal(rows[0].querySelector('input').checked, true);
   assert.equal(rows[1].querySelector('input').checked, false);
+  h.app.close();
+  const requestsBeforeCompletion = h.requests.length, sourcesBeforeCompletion = h.sources.length;
   await h.target.close();
   mux.resolve({ outputBytes: 4 });
   await until(() => h.app.getState().activeJob === null, 'download completion');
@@ -208,7 +297,15 @@ test('save picker uses the native Window receiver synchronously, despite a users
   assert.equal(pack.audio.disposed, 1);
   assert.equal(pack.controller.signal.aborted, true);
   assert.equal(getEventListeners(call.signal, 'abort').length, 0);
-  assert.match(h.el('status').textContent, /已保存/);
+  const savedStatus = `已保存：${h.events[0].args.suggestedName}`;
+  assert.equal(h.el('status').textContent, savedStatus);
+  assert.equal(h.doc.querySelector('#bnd-panel-host').hidden, true);
+  h.app.open();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.doc.querySelector('#bnd-panel-host').hidden, false);
+  assert.equal(h.el('status').textContent, savedStatus, 'reopening keeps the completed filename visible');
+  assert.equal(h.requests.length, requestsBeforeCompletion, 'reopening a completed download does not refresh its URLs');
+  assert.equal(h.sources.length, sourcesBeforeCompletion, 'reopening a completed download does not start new CDN probes');
 });
 
 test('dismissing the native save picker cancels without retrying, opening a writable, or starting mux', async t => {
