@@ -1,6 +1,6 @@
 {
   "name": "bilibili-native-download",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Session-aware Bilibili userscript with measured CDN selection and lossless streamed MP4 remuxing",
   "license": "MIT",

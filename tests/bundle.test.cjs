@@ -107,25 +107,38 @@ test('actual release userscript: toolbar -> authenticated WBI parse -> GM ranges
   let targetCloses = 0, targetAborts = 0, pickerCalls = 0, writableCalls = 0, maxWritten = 0;
   let outputFD = null, finished = false, suggestedName = '';
   t.after(() => { pendingGM.forEach(handle => handle.abort()); if (outputFD !== null && !finished) fs.closeSync(outputFD); });
-  win.showSaveFilePicker = options => {
-    pickerCalls++; suggestedName = options.suggestedName;
-    return Promise.resolve({ async createWritable() {
-      writableCalls++; outputFD = fs.openSync(outputFile, 'w');
-      return {
-        async write({ type, position, data }) {
-          assert.equal(type, 'write');
-          assert.ok(Number.isSafeInteger(position) && position >= 0);
-          const bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-          fs.writeSync(outputFD, bytes, 0, bytes.length, position);
-          maxWritten = Math.max(maxWritten, position + bytes.length);
-        },
-        async close() { targetCloses++; if (!finished) fs.closeSync(outputFD); finished = true; },
-        async abort() { targetAborts++; if (!finished) fs.closeSync(outputFD); finished = true; fs.rmSync(outputFile, { force: true }); }
-      };
-    } });
+  const nativeWindow = {};
+  const target = {
+    async write({ type, position, data }) {
+      assert.equal(this, target);
+      assert.equal(type, 'write');
+      assert.ok(Number.isSafeInteger(position) && position >= 0);
+      const bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+      fs.writeSync(outputFD, bytes, 0, bytes.length, position);
+      maxWritten = Math.max(maxWritten, position + bytes.length);
+    },
+    async close() { assert.equal(this, target); targetCloses++; if (!finished) fs.closeSync(outputFD); finished = true; },
+    async abort() { assert.equal(this, target); targetAborts++; if (!finished) fs.closeSync(outputFD); finished = true; fs.rmSync(outputFile, { force: true }); }
   };
+  const fileHandle = { async createWritable() {
+    assert.equal(this, fileHandle);
+    writableCalls++; outputFD = fs.openSync(outputFile, 'w');
+    return target;
+  } };
+  nativeWindow.showSaveFilePicker = function (options) {
+    if (this !== nativeWindow) throw new TypeError("Failed to execute 'showSaveFilePicker' on 'Window': Illegal invocation");
+    pickerCalls++; suggestedName = options.suggestedName;
+    return Promise.resolve(fileHandle);
+  };
+  win.unsafeWindow = nativeWindow;
+  const sandboxWindow = new Proxy(nativeWindow, {});
+  win.showSaveFilePicker = function (options) {
+    return sandboxWindow.showSaveFilePicker(options);
+  };
+  assert.throws(() => win.showSaveFilePicker({}), /Illegal invocation/, 'release fixture reproduces the old sandbox Window receiver bug');
   const bundle = fs.readFileSync(bundlePath, 'utf8');
   assert.match(bundle, /==UserScript==/);
+  assert.match(bundle, /^\/\/ @grant\s+unsafeWindow$/m, 'the installed userscript grants access to its native picker owner');
   win.eval(bundle);
   const toolbar = doc.querySelector('.video-toolbar-left-main'), button = doc.querySelector('#bnd-download-entry');
   assert.ok(button, 'Actual bundled entry point created its toolbar UI');

@@ -1,6 +1,6 @@
 'use strict';
 
-function startBiliDownloader({ win, doc, network, media, core, range, getValue, setValue, menu } = {}) {
+function startBiliDownloader({ win, doc, network, media, core, range, pickSaveFile, getValue, setValue, menu } = {}) {
   const C=core;
   const MiB=1024*1024;
   const ICON='<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 3v12m-4.5-4.5L12 15l4.5-4.5M4 15.5v3A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5v-3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -51,7 +51,7 @@ function startBiliDownloader({ win, doc, network, media, core, range, getValue, 
   const entryStyle=doc.createElement('style');entryStyle.textContent=`#bnd-download-entry{display:inline-flex;align-items:center;justify-content:center;gap:7px;margin:0 0 0 24px;padding:0;border:0;background:transparent;color:var(--text2,#61666d);font:14px/28px "PingFang SC",HarmonyOS_Regular,"Microsoft YaHei",sans-serif;white-space:nowrap;cursor:pointer;vertical-align:middle;flex-shrink:0}#bnd-download-entry:hover,#bnd-download-entry[data-busy="true"]{color:var(--brand_blue,#00aeec)}#bnd-download-entry:focus-visible{outline:2px solid #00aeec;outline-offset:4px;border-radius:3px}#bnd-download-entry svg{width:27px;height:27px} @media(max-width:1100px){#bnd-download-entry{margin-left:16px;gap:5px}}`;
   doc.documentElement.append(entryStyle);
   el('concurrency').value=String(concurrency);
-  if(typeof win.showSaveFilePicker!=='function') { el('save-mode').value='memory';el('save-mode').options[0].disabled=true; }
+  if(typeof pickSaveFile!=='function') { el('save-mode').value='memory';el('save-mode').options[0].disabled=true; }
 
   const currentVideo=()=>manifest?.videos.find(v=>v.key===selectedKey);
   const currentAudio=()=>manifest?.audios.find(a=>a.key===audioKey)||null;
@@ -166,7 +166,7 @@ function startBiliDownloader({ win, doc, network, media, core, range, getValue, 
     activeJob=job;updateControls();
     try{
       // This call MUST precede every await: the browser needs the click's activation.
-      const picked=memory?null:win.showSaveFilePicker({suggestedName:name,types:[{description:'MP4 视频',accept:{'video/mp4':['.mp4']}}]});
+      const picked=memory?null:pickSaveFile({suggestedName:name,types:[{description:'MP4 视频',accept:{'video/mp4':['.mp4']}}]});
       if(memory)target=C.memoryTarget();else{const handle=await picked;if(controller.signal.aborted)throw new DOMException('操作已取消','AbortError');target=await handle.createWritable();}
       if(controller.signal.aborted)throw new DOMException('操作已取消','AbortError');
       stopSource=()=>pack.controller.abort();controller.signal.addEventListener('abort',stopSource,{once:true});

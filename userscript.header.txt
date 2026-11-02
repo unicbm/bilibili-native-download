@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站原生下载 · 自动选线与音视频合成
 // @namespace    uni.bilibili.native-download
-// @version      1.0.0
+// @version      1.0.1
 // @description  在分享旁添加下载入口；当前会话解析画质/体积，CDN小块测速，分片并发下载，本地无损合成MP4，流式写入磁盘。
 // @author       uni
 // @match        https://www.bilibili.com/video/*
@@ -11,6 +11,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @connect      api.bilibili.com
 // @connect      bilivideo.com
 // @connect      bilivideo.cn
@@ -24,7 +25,7 @@
 // ==/UserScript==
 
 /*
- * B站原生下载 v1.0.0 · 2026-11-02
+ * B站原生下载 v1.0.1 · 2026-11-02
  * Application source: MIT. Repository, readable modules, build instructions
  * and tests: https://github.com/unicbm/bilibili-native-download
  *

@@ -6,6 +6,7 @@ const { getEventListeners } = require('node:events');
 const { JSDOM } = require('jsdom');
 const { createBiliCore } = require('../core.js');
 const { startBiliDownloader } = require('../main.js');
+const { createSaveFilePicker } = require('../picker.js');
 
 const core = createBiliCore();
 const href = 'https://www.bilibili.com/video/BV1TestVideo/?p=2';
@@ -50,13 +51,28 @@ function setup(t, options = {}) {
   win.URL.revokeObjectURL = url => revoked.push(url);
   const target = {
     writes: [], closes: 0, aborts: 0,
-    async write(chunk) { this.writes.push(chunk); },
-    async close() { this.closes++; },
-    async abort() { this.aborts++; },
+    async write(chunk) { assert.equal(this, target); this.writes.push(chunk); },
+    async close() { assert.equal(this, target); this.closes++; },
+    async abort() { assert.equal(this, target); this.aborts++; },
   };
   let writableCalls = 0;
-  const handle = { async createWritable() { writableCalls++; if (options.createWritable) return options.createWritable(); return target; } };
-  if (options.picker !== false) win.showSaveFilePicker = args => { events.push({ type: 'picker', args }); return options.picker ? options.picker(args) : Promise.resolve(handle); };
+  const handle = { async createWritable() { assert.equal(this, handle); writableCalls++; if (options.createWritable) return options.createWritable(); return target; } };
+  const pickerWindow = options.pickerWindow || win;
+  if (options.picker !== false) pickerWindow.showSaveFilePicker = function (args) {
+    // Native Window methods reject a userscript's window wrapper as `this`.
+    if (this !== pickerWindow) throw new TypeError("Failed to execute 'showSaveFilePicker' on 'Window': Illegal invocation");
+    events.push({ type: 'picker', args });
+    return options.picker ? options.picker(args) : Promise.resolve(handle);
+  };
+  if (pickerWindow !== win) {
+    const sandboxWindow = new Proxy(pickerWindow, {});
+    // Keep a callable on the sandbox even when the native API is unavailable.
+    // Neither capability detection nor saving should consult this wrapper.
+    win.showSaveFilePicker = function (args) {
+      if (typeof sandboxWindow.showSaveFilePicker !== 'function') throw new Error('Sandbox-only picker must not be called');
+      return sandboxWindow.showSaveFilePicker(args);
+    };
+  }
   function makeSource(args) {
     const id = Number(new URL(args.urls[0]).pathname.split('/')[2]);
     const source = {
@@ -91,7 +107,7 @@ function setup(t, options = {}) {
     },
   };
   const saved = [];
-  const app = startBiliDownloader({ win, doc, network, media, core, range, getValue: () => 4, setValue: (k, v) => saved.push([k, v]) });
+  const app = startBiliDownloader({ win, doc, network, media, core, range, pickSaveFile: createSaveFilePicker(pickerWindow), getValue: () => 4, setValue: (k, v) => saved.push([k, v]) });
   const el = id => app.shadow.querySelector(`[data-id="${id}"]`);
   const ready = async () => { app.open(); await until(() => app.getState().prepared, 'prepared selection'); };
   t.after(() => { app.dispose(); dom.window.close(); });
@@ -163,9 +179,10 @@ test('a superseded CDN preparation disposes its source and cannot publish a stal
   assert.equal(h.el('download').disabled, false);
 });
 
-test('save picker is invoked synchronously in the click before any awaited work', async t => {
+test('save picker uses the native Window receiver synchronously, despite a userscript window Proxy', async t => {
   const pick = deferred(), mux = deferred();
-  const h = setup(t, { picker: () => pick.promise, mux: args => mux.promise });
+  const h = setup(t, { pickerWindow: {}, picker: () => pick.promise, mux: args => mux.promise });
+  assert.throws(() => h.win.showSaveFilePicker({}), /Illegal invocation/, 'the old sandbox call must fail in this regression fixture');
   await h.ready();
   const pack = h.app.getState().prepared;
   h.el('download').click();
@@ -192,6 +209,25 @@ test('save picker is invoked synchronously in the click before any awaited work'
   assert.equal(pack.controller.signal.aborted, true);
   assert.equal(getEventListeners(call.signal, 'abort').length, 0);
   assert.match(h.el('status').textContent, /已保存/);
+});
+
+test('dismissing the native save picker cancels without retrying, opening a writable, or starting mux', async t => {
+  const h = setup(t, { pickerWindow: {}, picker: () => Promise.reject(abortError()) });
+  await h.ready();
+  const requestsBefore = h.requests.length;
+  const sourcesBefore = h.sources.length;
+  const pack = h.app.getState().prepared;
+  h.el('download').click();
+  await until(() => h.app.getState().activeJob === null, 'dismissed picker cleanup');
+  assert.equal(h.events.filter(e => e.type === 'picker').length, 1);
+  assert.equal(h.events.some(e => e.type === 'mux'), false);
+  assert.equal(h.writableCalls, 0);
+  assert.equal(h.requests.length, requestsBefore);
+  assert.equal(h.sources.length, sourcesBefore);
+  assert.equal(pack.video.disposed, 1);
+  assert.equal(pack.audio.disposed, 1);
+  assert.equal(h.el('error').hidden, true);
+  assert.match(h.el('status').textContent, /已取消/);
 });
 
 test('cancel while save picker is pending never opens a writable and releases prepared sources', async t => {
@@ -261,7 +297,8 @@ test('failed mux cleans up sources and abort listener, surfaces a redacted error
 });
 
 test('memory fallback creates a completed blob and changing quality revokes its URL', async t => {
-  const h = setup(t, { picker: false });
+  const h = setup(t, { picker: false, pickerWindow: {} });
+  assert.equal(typeof h.win.showSaveFilePicker, 'function', 'sandbox API presence must not override native picker availability');
   await h.ready();
   assert.equal(h.el('save-mode').value, 'memory');
   assert.equal(h.el('save-mode').options[0].disabled, true);
